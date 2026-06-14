@@ -1,0 +1,261 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Organization {
+  id                String          @id @default(cuid())
+  name              String          @unique
+  deptManagerLimit  Float           @default(25000.0)
+  genManagerLimit   Float           @default(100000.0)
+  properties        Property[]
+  users             User[]
+  items             InventoryItem[]
+  vendors           Vendor[]
+  recipes           Recipe[]
+  cleanChecklists   CleanChecklist[]
+  createdAt         DateTime        @default(now())
+}
+
+model Property {
+  id             String         @id @default(cuid())
+  name           String
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  stores         Store[]
+  users          User[]
+  purchaseOrders PurchaseOrder[]
+  createdAt      DateTime       @default(now())
+}
+
+model User {
+  id             String              @id @default(cuid())
+  email          String              @unique
+  password       String
+  name           String
+  role           String              // E.g., 'SUPER_ADMIN', 'HOTEL_OWNER', 'GENERAL_MANAGER', etc.
+  organizationId String
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  propertyId     String?
+  property       Property?           @relation(fields: [propertyId], references: [id])
+  createdPOs     PurchaseOrder[]     @relation("POCreatedBy")
+  approvedPOs    PurchaseOrder[]     @relation("POApprovedBy")
+  receivedGRNs   GoodsReceivedNote[]
+  wastageLogs    WastageLog[]
+  transactions   StockTransaction[]
+  stockTakes     StockTakeSession[]
+  createdAt      DateTime            @default(now())
+}
+
+model InventoryItem {
+  id              String         @id @default(cuid())
+  sku             String?
+  name            String
+  category        String         // e.g., "F&B", "Housekeeping", "Maintenance"
+  subcategory     String?
+  isConsumable    Boolean        @default(true)
+  
+  // Flat UoM fields for SQLite compatibility
+  purchaseUnit    String
+  consumptionUnit String
+  factor          Float
+  
+  organizationId  String
+  organization    Organization   @relation(fields: [organizationId], references: [id])
+  stockBalances   StockBalance[]
+  poItems         PurchaseOrderItem[]
+  grnItems        GoodsReceivedNoteItem[]
+  
+  recipeIngredients RecipeIngredient[]
+  cleanChecklists   CleanChecklist[]
+  wastageLogs       WastageLog[]
+  transactions      StockTransaction[]
+  stockTakeItems    StockTakeItem[]
+
+  createdAt       DateTime       @default(now())
+}
+
+model Store {
+  id             String         @id @default(cuid())
+  name           String         // e.g., "Main Warehouse", "Kitchen Store"
+  propertyId     String
+  property       Property       @relation(fields: [propertyId], references: [id])
+  stockBalances  StockBalance[]
+  purchaseOrders PurchaseOrder[]
+  
+  wastageLogs    WastageLog[]
+  transactions   StockTransaction[]
+  stockTakes     StockTakeSession[]
+
+  createdAt      DateTime       @default(now())
+}
+
+model StockBalance {
+  id             String        @id @default(cuid())
+  itemId         String
+  item           InventoryItem @relation(fields: [itemId], references: [id])
+  storeId        String
+  store          Store         @relation(fields: [storeId], references: [id])
+  quantity       Float         @default(0.0) // In consumptionUnit
+  minStockLevel  Float         @default(0.0)
+  avgCostPrice   Float         @default(0.0)
+  updatedAt      DateTime      @updatedAt
+}
+
+model Vendor {
+  id             String          @id @default(cuid())
+  name           String
+  email          String?
+  phone          String?
+  gstin          String?
+  address        String?
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  purchaseOrders PurchaseOrder[]
+  createdAt      DateTime        @default(now())
+}
+
+model PurchaseOrder {
+  id             String              @id @default(cuid())
+  poNumber       String              @unique
+  vendorId       String
+  vendor         Vendor              @relation(fields: [vendorId], references: [id])
+  propertyId     String
+  property       Property            @relation(fields: [propertyId], references: [id])
+  storeId        String
+  store          Store               @relation(fields: [storeId], references: [id])
+  status         String              // 'DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'COMPLETED', 'CANCELLED'
+  totalAmount    Float
+  createdById    String
+  createdBy      User                @relation("POCreatedBy", fields: [createdById], references: [id])
+  approvedById   String?
+  approvedBy     User?               @relation("POApprovedBy", fields: [approvedById], references: [id])
+  items          PurchaseOrderItem[]
+  grns           GoodsReceivedNote[]
+  createdAt      DateTime            @default(now())
+}
+
+model PurchaseOrderItem {
+  id           String        @id @default(cuid())
+  poId         String
+  po           PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  itemId       String
+  item         InventoryItem @relation(fields: [itemId], references: [id])
+  purchaseUnit String
+  orderQty     Float
+  unitPrice    Float
+  receivedQty  Float         @default(0.0)
+}
+
+model GoodsReceivedNote {
+  id             String                 @id @default(cuid())
+  grnNumber      String                 @unique
+  poId           String
+  po             PurchaseOrder          @relation(fields: [poId], references: [id])
+  receivedById   String
+  receivedBy     User                   @relation(fields: [receivedById], references: [id])
+  receivedDate   DateTime               @default(now())
+  items          GoodsReceivedNoteItem[]
+  createdAt      DateTime               @default(now())
+}
+
+model GoodsReceivedNoteItem {
+  id          String            @id @default(cuid())
+  grnId       String
+  grn         GoodsReceivedNote @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  itemId      String
+  item        InventoryItem     @relation(fields: [itemId], references: [id])
+  receivedQty Float
+  rejectedQty Float             @default(0.0)
+  unitPrice   Float
+  remarks     String?
+}
+
+model Recipe {
+  id             String             @id @default(cuid())
+  name           String
+  code           String             // unique for client e.g. REC-BUTTER-CHICKEN
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  ingredients    RecipeIngredient[]
+  createdAt      DateTime           @default(now())
+}
+
+model RecipeIngredient {
+  id        String        @id @default(cuid())
+  recipeId  String
+  recipe    Recipe        @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      InventoryItem @relation(fields: [itemId], references: [id])
+  quantity  Float         // Quantity in consumptionUnit
+  createdAt DateTime      @default(now())
+}
+
+model CleanChecklist {
+  id             String        @id @default(cuid())
+  cleanType      String        // e.g., "FULL_CLEAN", "CHECKOUT_CLEAN"
+  itemId         String
+  item           InventoryItem @relation(fields: [itemId], references: [id])
+  quantity       Float         // Quantity consumed in consumptionUnit
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime      @default(now())
+}
+
+model WastageLog {
+  id           String        @id @default(cuid())
+  itemId       String
+  item         InventoryItem @relation(fields: [itemId], references: [id])
+  storeId      String
+  store        Store         @relation(fields: [storeId], references: [id])
+  quantity     Float         // Quantity in consumptionUnit
+  reason       String        // e.g., "SPOILED", "EXPIRED", "BROKEN", "OTHER"
+  remarks      String?
+  recordedById String
+  recordedBy   User          @relation(fields: [recordedById], references: [id])
+  createdAt    DateTime      @default(now())
+}
+
+model StockTransaction {
+  id           String        @id @default(cuid())
+  itemId       String
+  item         InventoryItem @relation(fields: [itemId], references: [id])
+  storeId      String
+  store        Store         @relation(fields: [storeId], references: [id])
+  type         String        // RECEIPT, DISPATCH, WASTAGE, RECIPE_DEPLETION, HOUSEKEEPING_CLEAN, ADJUSTMENT
+  quantity     Float         // negative for depletion, positive for receipt (in consumptionUnit)
+  costPrice    Float         // cost per consumptionUnit at the time of transaction
+  referenceId  String?       // ID of source transaction (e.g. GRN ID, sale reference, wastage ID, clean ID)
+  remarks      String?
+  recordedById String?
+  recordedBy   User?         @relation(fields: [recordedById], references: [id])
+  createdAt    DateTime      @default(now())
+}
+
+model StockTakeSession {
+  id             String          @id @default(cuid())
+  storeId        String
+  store          Store           @relation(fields: [storeId], references: [id])
+  status         String          // 'DRAFT', 'COMPLETED', 'CANCELLED'
+  createdById    String
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  items          StockTakeItem[]
+  createdAt      DateTime        @default(now())
+}
+
+model StockTakeItem {
+  id             String           @id @default(cuid())
+  sessionId      String
+  session        StockTakeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  itemId         String
+  item           InventoryItem    @relation(fields: [itemId], references: [id])
+  systemQty      Float            // frozen system quantity
+  physicalQty    Float?           // entered physical count
+  varianceQty    Float?           // physicalQty - systemQty
+  varianceValue  Float?           // varianceQty * avgCostPrice
+  avgCostPrice   Float            // frozen WAC average cost price
+}
